@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<gameList>
+	<game>
+		<path>./Wifi_Enable.sh</path>
+		<name>Wifi Enable</name>
+		<desc>Enable wifi and bluetooth using rfkill</desc>
+		<image>/home/pi/ES-Simple-Scripts/theme-mods/pixel-tft/settings/icons/Wifi_Enable.png</image>
+	</game>
+  <game>
+		<path>./Wifi_Disable.sh</path>
+		<name>Wifi Disable</name>
+		<desc>Disable wifi and bluetooth using rfkill</desc>
+		<image>/home/pi/ES-Simple-Scripts/theme-mods/pixel-tft/settings/icons/Wifi_Disable.png</image>
+	</game>
+</gameList>
