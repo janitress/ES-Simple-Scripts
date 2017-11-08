@@ -22,17 +22,36 @@
 
 import RPi.GPIO as GPIO 
 import time
+import struct
 import os,signal,sys
 import subprocess
 import re
 import logging
 import logging.handlers
 
+# Config variables
+project_dir     = '/home/pi/ES-Simple-Scripts/'
+bin_dir         = project_dir + 'misc-scripts/'
+resources_dir   = project_dir + 'resources/'
+
 # Hardware variables
 pi_shdn = 4
 
 # Software variables
-settings_shutdown = 1 #Enable ability to shut down system
+settings_shutdown = False #Enable ability to shut down system
+settings_mode = 'ADVANCED' #ADVANCED=menu, NORMAL=ON/OFF only
+
+# Read keyboard variables
+infile_path = "/dev/input/event" + (sys.argv[1] if len(sys.argv) > 1 else "0")
+
+FORMAT = 'llHHI'  # long int, long int, unsigned short, unsigned short, unsigned int
+EVENT_SIZE = struct.calcsize(FORMAT)
+
+key_volup = 103
+key_voldown = 108
+key_shutdown = 29
+key_wifi_enable = 45
+key_wifi_disable = 44
 
 # Setup
 logging.basicConfig(level=logging.DEBUG)
@@ -43,12 +62,111 @@ GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(pi_shdn, GPIO.IN)
 
+# Check for advanced mode state
+def checkAdvanced():
+  state = not GPIO.input(pi_shdn)
+  if (state):
+    doPngOverlay(resources_dir + 'menu_items.png')
+    looping = True
+    reset = False
+    while looping:
+      key = readKeyPresses()
+      
+      if (key == key_shutdown):
+        logging.info("SHUTDOWN KEY")
+        doPngOverlay(resources_dir + 'shutting_down.png')
+        doShutdown()
+      elif (key == key_volup):
+        logging.info("VOLUP KEY")
+        doPngOverlay(resources_dir + 'vol_up.png')
+        doVol('UP')
+        time.sleep(0.5)
+        reset = True
+      elif (key == key_voldown):
+        logging.info("VOLDOWN KEY")
+        doPngOverlay(resources_dir + 'vol_down.png')
+        doVol('DOWN')
+        time.sleep(0.5)
+        reset = True
+      elif (key == key_wifi_enable):
+        logging.info("WIFI ENABLE KEY")
+        doPngOverlay(resources_dir + 'wifi_enable.png')
+        doWifi('ON')
+        time.sleep(1)
+        reset = True
+      elif (key == key_wifi_disable):
+        logging.info("WIFI DISABLE KEY")
+        doPngOverlay(resources_dir + 'wifi_disable.png')
+        doWifi('OFF')
+        time.sleep(1)
+        reset = True
+      else:
+        logging.info("UNKNOWN KEY")
+      
+      if GPIO.input(pi_shdn):
+        doPngOverlay(False)
+        looping = False
+      
+      if reset:
+        doPngOverlay(resources_dir + 'menu_items.png')
+        reset = False
+      
+      time.sleep(0.2)
+
+# Read the keyboard for press (1 sec)
+def readKeyPresses():
+  ret = 0
+  try:
+    # Open file in binary mode
+    in_file = open(infile_path, "rb")
+
+    event = 0
+    with Timeout(1):
+      event = in_file.read(EVENT_SIZE)
+
+    (tv_sec, tv_usec, type, code, value) = struct.unpack(FORMAT, event)
+
+    if type != 0 or code != 0 or value != 0:
+      print("Event type %u, code %u, value %u at %d.%d" % (type, code, value, tv_sec, tv_usec))
+      ret = code
+    else:
+      # Events with code, type and value == 0 are "separator" events
+      print("===========================================")
+
+    #event = in_file.read(EVENT_SIZE)
+
+    in_file.close()
+  except:
+    logging.error("Failed to read keypresses")
+    pass
+  
+  return ret
+
 # Check for shutdown state
 def checkShdn():
   state = not GPIO.input(pi_shdn)
   if (state):
     logging.info("SHUTDOWN")
     doShutdown()
+
+# Class used to timeout commands
+class Timeout():
+  """Timeout class using ALARM signal."""
+  class Timeout(Exception):
+    pass
+
+  def __init__(self, sec):
+    self.sec = sec
+
+  def __enter__(self):
+    signal.signal(signal.SIGALRM, self.raise_timeout)
+    signal.alarm(self.sec)
+
+  def __exit__(self, *args):
+    signal.alarm(0)    # disable alarm
+
+  def raise_timeout(self, *args):
+    raise Timeout.Timeout()
 
 # Read CPU temp
 def getCPUtemperature():
@@ -86,6 +204,26 @@ def doShutdown():
     pass
   sys.exit(0)
 
+# Set volume
+def doVol(state):
+  if state == 'UP':
+    os.system('sudo amixer -M set PCM 20%+')
+  elif state == 'DOWN':
+    os.system('sudo amixer -M set PCM 20%-')
+  else:
+    logger.info("Unknown volume")
+
+# Set wifi
+def doWifi(state):
+  if state == 'ON':
+    os.system("sudo rfkill unblock wifi")
+    os.system("sudo rfkill unblock bluetooth")
+  elif state == 'OFF':
+    os.system("sudo rfkill block wifi")
+    os.system("sudo rfkill block bluetooth")
+  else:
+    logger.info("Unknown wifi")
+
 # Show MP4 overlay
 def doVidOverlay(overlay):
   os.system("/usr/bin/omxplayer --no-osd --layer 999999 " + overlay + " --alpha 160;");
@@ -93,13 +231,14 @@ def doVidOverlay(overlay):
 # Show PNG overlay
 def doPngOverlay(overlay):
   try:
-    os.system("kill -s 9 `pidof pngview`");
+    os.system('kill -9 `pidof pngview`');
   except:
     pass
-  try:
-    os.system("./pngview -b 0 -l 999999 " + overlay + "&");
-  except:
-    pass
+  if overlay:
+    try:
+      os.system(bin_dir + "pngview -b 0 -l 999999 " + overlay + "&");
+    except:
+      pass
 
 # Misc functions
 def clamp(n, minn, maxn):
@@ -110,10 +249,16 @@ try:
   print "STARTED!"
   while 1:
     
-    if (settings_shutdown):
-      checkShdn()
+    if settings_mode == 'NORMAL':
+      if (settings_shutdown):
+        checkShdn()
     
-    #temp = checkTemperature()
+    elif settings_mode == 'ADVANCED':
+      checkAdvanced()
+    
+    else:
+      logging.info("ERROR: settings_mode incorrectly defined")
+      sys.exit(1)
     
     time.sleep(3);
   
