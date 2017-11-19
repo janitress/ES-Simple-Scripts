@@ -22,6 +22,7 @@
 
 import RPi.GPIO as GPIO 
 import time
+import math
 import struct
 import os,signal,sys
 import subprocess
@@ -36,6 +37,12 @@ resources_dir   = project_dir + 'resources/'
 
 # Hardware variables
 pi_shdn = 4
+vpin    = 23
+
+# Anlog config values
+vc = 2.0  # Switching voltage (v)     (leave this)
+r = 31.0  # RC resistance     (k ohm) (adjust this!)
+c = 1.0   # RC capacitance    (uF)    (leave this)
 
 # Software variables
 settings_shutdown = False #Enable ability to shut down system
@@ -168,6 +175,26 @@ class Timeout():
   def raise_timeout(self, *args):
     raise Timeout.Timeout()
 
+# READ ANALOG
+def analog_read_start(pin):
+  GPIO.setup(pin, GPIO.OUT)
+  GPIO.output(pin, GPIO.LOW)
+  time.sleep(0.1)
+
+  analog_start_time = time.time()
+  GPIO.setup(pin, GPIO.IN)
+  res = GPIO.wait_for_edge(pin, GPIO.RISING, timeout=200)
+  analog_end_time = time.time()
+  GPIO.setup(pin, GPIO.OUT)
+  GPIO.output(pin, GPIO.LOW)
+
+  voltage = - ( vc / (math.exp(-((analog_end_time - analog_start_time)*1000)/(r*c))-1) )
+
+  if res is None:
+    return False
+  else:
+    return voltage
+
 # Read CPU temp
 def getCPUtemperature():
   res = os.popen('vcgencmd measure_temp').readline()
@@ -247,6 +274,8 @@ def clamp(n, minn, maxn):
 # Main loop
 try:
   print "STARTED!"
+  analog_read_start(vpin) # perform analog read to clear delays/etc
+  
   while 1:
     
     if settings_mode == 'NORMAL':
