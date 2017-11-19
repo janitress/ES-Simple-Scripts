@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 # 
-# This file originates from Kite's Super AIO control board project.
+# This file originates from Kite's AIO control board project.
 # Author: Kite (Giles Burgess)
 # 
 # THIS HEADER MUST REMAIN WITH THIS FILE AT ALL TIMES
@@ -23,7 +23,7 @@
 #
 # Read an ANALOG pin with a raspberry pi GPIO
 #
-# PIN --- 50k --- VBATT
+# PIN --- 51k --- VBATT
 #      |
 #      | ---- 100k --- GND
 #      |

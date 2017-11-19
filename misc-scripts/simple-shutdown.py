@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 # 
-# This file originates from Kite's Super AIO control board project.
+# This file originates from Kite's AIO control board project.
 # Author: Kite (Giles Burgess)
 # 
 # THIS HEADER MUST REMAIN WITH THIS FILE AT ALL TIMES
@@ -29,11 +29,18 @@ import subprocess
 import re
 import logging
 import logging.handlers
+try:
+  from configparser import ConfigParser
+except ImportError:
+  from ConfigParser import ConfigParser  # ver. < 3.0
 
 # Config variables
 project_dir     = '/home/pi/ES-Simple-Scripts/'
 bin_dir         = project_dir + 'misc-scripts/'
 resources_dir   = project_dir + 'resources/'
+ini_data_file   = bin_dir + 'osd/data.ini'
+ini_config_file = bin_dir + 'osd/config.ini'
+osd_path        = bin_dir + 'osd/saio-osd'
 
 # Hardware variables
 pi_shdn = 4
@@ -43,6 +50,15 @@ vpin    = 23
 vc = 2.0  # Switching voltage (v)     (leave this)
 r = 31.0  # RC resistance     (k ohm) (adjust this!)
 c = 1.0   # RC capacitance    (uF)    (leave this)
+
+# Wifi variables
+wifi_state = 'UNKNOWN'
+wifi_off = 0
+wifi_warning = 1
+wifi_error = 2
+wifi_1bar = 3
+wifi_2bar = 4
+wifi_3bar = 5
 
 # Software variables
 settings_shutdown = False #Enable ability to shut down system
@@ -68,6 +84,37 @@ logging.info("Program Started")
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(pi_shdn, GPIO.IN)
+
+if settings_mode == 'ADVANCED':
+  # Set up configOSD file
+  configOSD = ConfigParser()
+  configOSD.add_section('protocol')
+  configOSD.set('protocol', 'version', 1)
+  configOSD.add_section('data')
+  configOSD.set('data', 'voltage', '-.--')
+  configOSD.set('data', 'temperature', '--.-')
+  configOSD.set('data', 'showdebug', 1)
+  configOSD.set('data', 'showwifi', 0)
+  configOSD.set('data', 'showmute', 0)
+
+  try:
+    with open(ini_data_file, 'w') as configfile:
+      configOSD.write(configfile)
+  except Expection as e:
+    logging.exception("ERROR: Failed to create configOSD file");
+    sys.exit(1);
+      
+  # Set up OSD service
+  try:
+    osd_proc = subprocess.Popen([osd_path, "-d", ini_data_file, "-c", ini_config_file])
+    time.sleep(1)
+    osd_poll = osd_proc.poll()
+    if (osd_poll):
+      logging.error("ERROR: Failed to start OSD, got return code [" + str(osd_poll) + "]\n")
+      sys.exit(1)
+  except Exception as e:
+    logging.exception("ERROR: Failed start OSD binary");
+    sys.exit(1);
 
 # Check for advanced mode state
 def checkAdvanced():
@@ -200,23 +247,19 @@ def getCPUtemperature():
   res = os.popen('vcgencmd measure_temp').readline()
   return float(res.replace("temp=","").replace("'C\n",""))
 
-# Check temp
-def checkTemperature():
-  temp = getCPUtemperature()
+# Create ini configOSD
+def createINI(volt, curr, temp, debug, wifi, mute, file):
+  #configOSD.set('data', 'voltage', '{0:.2f}'.format(volt/100.00))
+  configOSD.set('data', 'voltage', volt)
+  configOSD.set('data', 'temperature', temp)
+  configOSD.set('data', 'showdebug', debug)
+  configOSD.set('data', 'showwifi', wifi)
+  configOSD.set('data', 'showmute', mute)
+
+  with open(file, 'w') as configfile:
+    configOSD.write(configfile)
   
-  global temperature_isover
-  
-  if (temperature_isover):
-    if (temp < temperature_max - temperature_threshold):
-      temperature_isover = False
-      GPIO.output(pi_overtemp, GPIO.HIGH)
-      logging.info("TEMP OK")
-  else:
-    if (temp > temperature_max):
-      temperature_isover = True
-      GPIO.output(pi_overtemp, GPIO.LOW)
-      logging.info("OVERTEMP")
-  return temp
+  osd_proc.send_signal(signal.SIGUSR1)
 
 # Do a shutdown
 def doShutdown():
@@ -284,12 +327,17 @@ try:
     
     elif settings_mode == 'ADVANCED':
       checkAdvanced()
+      
+      volt = '{0:.0f}'.format(analog_read_start(vpin)*100.00)
+      temp = getCPUtemperature()
+      createINI(volt, 0, temp, 0, 0, 0, ini_data_file)
     
     else:
       logging.info("ERROR: settings_mode incorrectly defined")
       sys.exit(1)
     
-    time.sleep(3);
+    time.sleep(4);
   
 except KeyboardInterrupt:
   GPIO.cleanup
+  osd_proc.terminate()
