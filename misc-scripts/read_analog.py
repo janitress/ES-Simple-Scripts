@@ -24,10 +24,10 @@
 # Read an ANALOG pin with a raspberry pi GPIO
 #
 # PIN --- 50k --- VBATT
-#          |
-#          | ---- 100k --- GND
-#          |
-#          | ---- 1uF  --- GND
+#      |
+#      | ---- 100k --- GND
+#      |
+#      | ---- 1uF  --- GND
 #
 
 import RPi.GPIO as GPIO, time
