@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 # 
-# This file originates from Kite's Super AIO control board project.
+# This file originates from Kite's AIO control board project.
 # Author: Kite (Giles Burgess)
 # 
 # THIS HEADER MUST REMAIN WITH THIS FILE AT ALL TIMES
@@ -22,20 +22,44 @@
 
 import RPi.GPIO as GPIO 
 import time
+import math
 import struct
 import os,signal,sys
 import subprocess
 import re
 import logging
 import logging.handlers
+try:
+  from configparser import ConfigParser
+except ImportError:
+  from ConfigParser import ConfigParser  # ver. < 3.0
 
 # Config variables
 project_dir     = '/home/pi/ES-Simple-Scripts/'
 bin_dir         = project_dir + 'misc-scripts/'
 resources_dir   = project_dir + 'resources/'
+ini_data_file   = bin_dir + 'osd/data.ini'
+ini_config_file = bin_dir + 'osd/config.ini'
+osd_path        = bin_dir + 'osd/saio-osd'
 
 # Hardware variables
 pi_shdn = 4
+vpin    = 23
+pi_vtx  = 1
+
+# Anlog config values
+vc = 2.0  # Switching voltage (v)     (leave this)
+r = 31.0  # RC resistance     (k ohm) (adjust this!)
+c = 1.0   # RC capacitance    (uF)    (leave this)
+
+# Wifi variables
+wifi_state = 'UNKNOWN'
+wifi_off = 0
+wifi_warning = 1
+wifi_error = 2
+wifi_1bar = 3
+wifi_2bar = 4
+wifi_3bar = 5
 
 # Software variables
 settings_shutdown = False #Enable ability to shut down system
@@ -52,6 +76,8 @@ key_voldown = 108
 key_shutdown = 29
 key_wifi_enable = 45
 key_wifi_disable = 44
+key_vtx_enable = 106
+key_vtx_disable = 105
 
 # Setup
 logging.basicConfig(level=logging.DEBUG)
@@ -61,6 +87,37 @@ logging.info("Program Started")
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)
 GPIO.setup(pi_shdn, GPIO.IN)
+
+if settings_mode == 'ADVANCED':
+  # Set up configOSD file
+  configOSD = ConfigParser()
+  configOSD.add_section('protocol')
+  configOSD.set('protocol', 'version', 1)
+  configOSD.add_section('data')
+  configOSD.set('data', 'voltage', '-.--')
+  configOSD.set('data', 'temperature', '--.-')
+  configOSD.set('data', 'showdebug', 1)
+  configOSD.set('data', 'showwifi', 0)
+  configOSD.set('data', 'showmute', 0)
+
+  try:
+    with open(ini_data_file, 'w') as configfile:
+      configOSD.write(configfile)
+  except Expection as e:
+    logging.exception("ERROR: Failed to create configOSD file");
+    sys.exit(1);
+      
+  # Set up OSD service
+  try:
+    osd_proc = subprocess.Popen([osd_path, "-d", ini_data_file, "-c", ini_config_file])
+    time.sleep(1)
+    osd_poll = osd_proc.poll()
+    if (osd_poll):
+      logging.error("ERROR: Failed to start OSD, got return code [" + str(osd_poll) + "]\n")
+      sys.exit(1)
+  except Exception as e:
+    logging.exception("ERROR: Failed start OSD binary");
+    sys.exit(1);
 
 # Check for advanced mode state
 def checkAdvanced():
@@ -98,6 +155,18 @@ def checkAdvanced():
         logging.info("WIFI DISABLE KEY")
         doPngOverlay(resources_dir + 'wifi_disable.png')
         doWifi('OFF')
+        time.sleep(1)
+        reset = True
+      elif (key == key_vtx_enable):
+        logging.info("VTX ENABLE KEY")
+        doPngOverlay(resources_dir + 'vtx_enable.png')
+        doVtx('ON')
+        time.sleep(1)
+        reset = True
+      elif (key == key_vtx_disable):
+        logging.info("VTX DISABLE KEY")
+        doPngOverlay(resources_dir + 'vtx_disable.png')
+        doVtx('OFF')
         time.sleep(1)
         reset = True
       else:
@@ -168,28 +237,44 @@ class Timeout():
   def raise_timeout(self, *args):
     raise Timeout.Timeout()
 
+# READ ANALOG
+def analog_read_start(pin):
+  GPIO.setup(pin, GPIO.OUT)
+  GPIO.output(pin, GPIO.LOW)
+  time.sleep(0.1)
+
+  analog_start_time = time.time()
+  GPIO.setup(pin, GPIO.IN)
+  res = GPIO.wait_for_edge(pin, GPIO.RISING, timeout=200)
+  analog_end_time = time.time()
+  GPIO.setup(pin, GPIO.OUT)
+  GPIO.output(pin, GPIO.LOW)
+
+  voltage = - ( vc / (math.exp(-((analog_end_time - analog_start_time)*1000)/(r*c))-1) )
+
+  if res is None:
+    return False
+  else:
+    return voltage
+
 # Read CPU temp
 def getCPUtemperature():
   res = os.popen('vcgencmd measure_temp').readline()
   return float(res.replace("temp=","").replace("'C\n",""))
 
-# Check temp
-def checkTemperature():
-  temp = getCPUtemperature()
+# Create ini configOSD
+def createINI(volt, curr, temp, debug, wifi, mute, file):
+  #configOSD.set('data', 'voltage', '{0:.2f}'.format(volt/100.00))
+  configOSD.set('data', 'voltage', volt)
+  configOSD.set('data', 'temperature', temp)
+  configOSD.set('data', 'showdebug', debug)
+  configOSD.set('data', 'showwifi', wifi)
+  configOSD.set('data', 'showmute', mute)
+
+  with open(file, 'w') as configfile:
+    configOSD.write(configfile)
   
-  global temperature_isover
-  
-  if (temperature_isover):
-    if (temp < temperature_max - temperature_threshold):
-      temperature_isover = False
-      GPIO.output(pi_overtemp, GPIO.HIGH)
-      logging.info("TEMP OK")
-  else:
-    if (temp > temperature_max):
-      temperature_isover = True
-      GPIO.output(pi_overtemp, GPIO.LOW)
-      logging.info("OVERTEMP")
-  return temp
+  osd_proc.send_signal(signal.SIGUSR1)
 
 # Do a shutdown
 def doShutdown():
@@ -212,6 +297,18 @@ def doVol(state):
     os.system('sudo amixer -M set PCM 20%-')
   else:
     logger.info("Unknown volume")
+
+# Set VTX
+def doVtx(state):
+  if state == 'ON':
+    GPIO.setup(pi_vtx, GPIO.OUT)
+    GPIO.output(pi_vtx, GPIO.LOW)
+  elif state == 'OFF':
+    GPIO.setup(pi_vtx, GPIO.OUT)
+    GPIO.output(pi_vtx, GPIO.HIGH)
+    GPIO.setup(pi_vtx, GPIO.IN)
+  else:
+    logger.info("Unknown vtx")
 
 # Set wifi
 def doWifi(state):
@@ -247,6 +344,8 @@ def clamp(n, minn, maxn):
 # Main loop
 try:
   print "STARTED!"
+  analog_read_start(vpin) # perform analog read to clear delays/etc
+  
   while 1:
     
     if settings_mode == 'NORMAL':
@@ -255,12 +354,17 @@ try:
     
     elif settings_mode == 'ADVANCED':
       checkAdvanced()
+      
+      volt = '{0:.0f}'.format(analog_read_start(vpin)*100.00)
+      temp = getCPUtemperature()
+      createINI(volt, 0, temp, 1, 0, 0, ini_data_file)
     
     else:
       logging.info("ERROR: settings_mode incorrectly defined")
       sys.exit(1)
     
-    time.sleep(3);
+    time.sleep(4);
   
 except KeyboardInterrupt:
   GPIO.cleanup
+  osd_proc.terminate()
