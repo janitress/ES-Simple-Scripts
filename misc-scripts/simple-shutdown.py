@@ -357,7 +357,7 @@ try:
       
       volt = '{0:.0f}'.format(analog_read_start(vpin)*100.00)
       temp = getCPUtemperature()
-      createINI(volt, 0, temp, 1, 0, 0, ini_data_file)
+      createINI(volt, 0, temp, 0, 0, 0, ini_data_file)
     
     else:
       logging.info("ERROR: settings_mode incorrectly defined")
