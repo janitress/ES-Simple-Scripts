@@ -12,4 +12,16 @@
 		<desc>Disable wifi and bluetooth using rfkill</desc>
 		<image>/home/pi/ES-Simple-Scripts/theme-mods/pixel-tft/settings/icons/Wifi_Disable.png</image>
 	</game>
+	<game>
+		<path>./Composite_Enable.sh</path>
+		<name>Composite Enable</name>
+		<desc>Enable composite output</desc>
+		<image>/home/pi/ES-Simple-Scripts/theme-mods/pixel-tft/settings/icons/Composite_Enable.png</image>
+	</game>
+	<game>
+		<path>./Hdmi_Enable.sh</path>
+		<name>HDMI Enable</name>
+		<desc>Enable HDMI output</desc>
+		<image>/home/pi/ES-Simple-Scripts/theme-mods/pixel-tft/settings/icons/Hdmi_Enable.png</image>
+	</game>
 </gameList>
